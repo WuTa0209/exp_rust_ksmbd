@@ -90,7 +90,7 @@ pub fn rust_ksmbd_decode_ntlmssp_auth_blob(authblob: *mut authenticate_message,
     kernel::prelude::pr_info!("{:?}\n", dn_off);
     kernel::prelude::pr_info!("{:?}\n", dn_off as usize);
     kernel::prelude::pr_info!("{:?}\n", unsafe{(authblob as *const c_char).add(dn_off as usize)});
-    domain_name = unsafe{smb_strndup_from_utf16((authblob as *const c_char).add(dn_off as usize),
+    domain_name = unsafe{rust_smb_strndup_from_utf16((authblob as *const c_char).add(dn_off as usize),
             dn_len as i32, true, (*conn).local_nls)};
     // domain_name = smb_strndup_from_utf16((const char *)authblob + dn_off,
     //           dn_len, true, conn->local_nls);
@@ -149,41 +149,89 @@ pub fn rust_ksmbd_decode_ntlmssp_auth_blob(authblob: *mut authenticate_message,
     return ret;
 }
 
-// pub fn rust_smb_strndup_from_utf16(
-//     src: *const core::ffi::c_char,
-//     maxlen: core::ffi::c_int,
-//     is_unicode: bool_,
-//     codepage: *const nls_table,
-// ) -> *mut core::ffi::c_char {
-//     let len: core::ffi::c_int;
-//     let ret: core::ffi::c_int;
-//     let mut dst: *mut core::ffi::c_char;
-
-//     if is_unicode {
-//         len = unsafe{smb_utf16_bytes(src as *const u16, maxlen, codepage)};
-//         len += unsafe{nls_nullsize(codepage)};
-//         dst = unsafe{kmalloc(len as usize, GFP_KERNEL) as *mut core::ffi::c_char};
-//         if dst.is_null() {
-//             return unsafe{ERR_PTR(-ENOMEM)};
-//         }
-//         ret = unsafe{smb_from_utf16(dst, src as *const u16, len as i32, maxlen, codepage,
-//                 false)};
-//         if ret < 0 {
-//             unsafe{kfree(dst as *const core::ffi::c_void)};
-//             return unsafe{ERR_PTR(-EINVAL)};
-//         }
-//     } else {
-//         len = unsafe{strnlen(src, maxlen as usize)};
-//         len += 1;
-//         dst = unsafe{kmalloc(len as usize, GFP_KERNEL) as *mut core::ffi::c_char};
-//         if dst.is_null() {
-//             return unsafe{ERR_PTR(-ENOMEM)};
-//         }
-//         unsafe{strscpy(dst, src, len as usize)};
-//     }
-
-//     return dst;
+// extern "C" {
+//     #[link(name = "smb_utf16_bytes")]
+//     pub fn rust_smb_utf16_bytes(from: *const u16, maxbytes: core::ffi::c_int,
+//         codepage: *const nls_table) -> core::ffi::c_int;    
 // }
+
+// extern "C" {
+//     #[link(name = "smb_from_utf16")]
+//     pub fn rust_smb_from_utf16(to: *mut core::ffi::c_char, from: *const u16, tolen: core::ffi::c_int,
+//         fromlen: core::ffi::c_int, codepage: *const nls_table, mapchar: bool_) -> core::ffi::c_int;
+// }
+
+
+pub fn ERR_PTR(error: core::ffi::c_long) -> *mut core::ffi::c_void {
+    return error as *mut core::ffi::c_void;
+}
+
+//static inline void * __must_check ERR_PTR(long error)
+// {
+// 	return (void *) error;
+// }
+
+// static inline int
+// nls_nullsize(const struct nls_table *codepage)
+// {
+// 	int charlen;
+// 	char tmp[NLS_MAX_CHARSET_SIZE];
+
+// 	charlen = codepage->uni2char(0, tmp, NLS_MAX_CHARSET_SIZE);
+
+// 	return charlen > 0 ? charlen : 1;
+// }
+pub fn rust_nls_nullsize(codepage: *const nls_table) -> core::ffi::c_int {
+    let mut charlen: core::ffi::c_int;
+    let mut tmp: [core::ffi::c_char; NLS_MAX_CHARSET_SIZE as usize] = [0; NLS_MAX_CHARSET_SIZE as usize];
+    let uni2char_func = unsafe{(*codepage).uni2char.unwrap()};
+    charlen = unsafe{uni2char_func(0, tmp.as_mut_ptr() as *mut u8, NLS_MAX_CHARSET_SIZE as i32)};
+    if charlen > 0 {
+        return charlen;
+    } else {
+        return 1;
+    }
+}
+
+//static int smb_utf16_bytes(const __le16 *from, int maxbytes,
+    // const struct nls_table *codepage)
+pub fn rust_smb_strndup_from_utf16(
+    src: *const core::ffi::c_char,
+    maxlen: core::ffi::c_int,
+    is_unicode: bool_,
+    codepage: *const nls_table,
+) -> *mut core::ffi::c_char {
+    let mut len: core::ffi::c_int;
+    let ret: core::ffi::c_int;
+    let mut dst: *mut core::ffi::c_char;
+
+    if is_unicode {
+        len = unsafe{smb_utf16_bytes(src as *const u16, maxlen, codepage)};
+        len += unsafe{rust_nls_nullsize(codepage)};
+        dst = unsafe{__kmalloc(len as usize, GFP_KERNEL) as *mut core::ffi::c_char};
+        if dst.is_null() {
+            return unsafe{ERR_PTR(-ENOMEM as i64) as *mut i8};
+        }
+        ret = unsafe{smb_from_utf16(dst, src as *const u16, len as i32, maxlen, codepage,
+                false)};
+        if ret < 0 {
+            unsafe{kfree(dst as *const core::ffi::c_void)};
+            return unsafe{ERR_PTR(-EINVAL as i64) as *mut i8};
+        }
+    } else {
+        len = unsafe{strnlen(src, maxlen as u64) as i32};
+        len += 1;
+        dst = unsafe{__kmalloc(len as usize, GFP_KERNEL) as *mut core::ffi::c_char};
+        if dst.is_null() {
+            return unsafe{ERR_PTR(-ENOMEM as i64) as *mut i8};
+        }
+        unsafe{strscpy(dst, src, len as usize)};
+    }
+
+    return dst;
+}
+
+
 // char *smb_strndup_from_utf16(const char *src, const int maxlen,
 //     const bool is_unicode,
 //     const struct nls_table *codepage)
