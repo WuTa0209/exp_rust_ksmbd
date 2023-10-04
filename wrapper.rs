@@ -1,4 +1,5 @@
 use kernel::bindings::*;
+// use kernel::prelude::*;
 use kernel::fmt;
 use core::ffi::*;
 
@@ -23,7 +24,44 @@ extern "C" {
     pub fn rust_pr_info(
         val: ::core::ffi::c_uint);
 }
+//int cifs_arc4_setkey(struct arc4_ctx *ctx, const u8 *in_key, unsigned int key_len);
+#[no_mangle]
+extern "C" {
+    pub fn cifs_arc4_setkey(ctx: *mut arc4_ctx, in_key: *const u8, key_len: core::ffi::c_uint) -> core::ffi::c_int;
+}
+// void cifs_arc4_crypt(struct arc4_ctx *ctx, u8 *out, const u8 *in, unsigned int len);
+#[no_mangle]
+extern "C" {
+    pub fn cifs_arc4_crypt(ctx: *mut arc4_ctx, out: *mut u8, in_: *const u8, len: core::ffi::c_uint);
+}
+
+#[no_mangle]
+extern "C" {
+    #[link(name="rust_helper_ERR_PTR")]
+    pub fn rust_helper_ERR_PTR(error: i64) -> *mut core::ffi::c_void;
+}
+
+// long rust_helper_PTR_ERR(__force const void *ptr)
+// {
+// 	return PTR_ERR(ptr);
+// }
+#[no_mangle]
+#[link(name="rust_helper_PTR_ERR")]
+extern "C" {
+    pub fn rust_helper_PTR_ERR(ptr: *const core::ffi::c_void) -> i64;
+}
+
 pub const __LOG_PREFIX: &[u8] = b"wrapper\0";
+
+// #[no_mangle]
+// extern "C" {
+//     pub fn rust_ksmbd_decode_ntlmssp_auth_blob(authblob: *mut authenticate_message,
+//         blob_len:  core::ffi::c_int,
+//         conn: *mut ksmbd_conn,
+//         sess: *mut ksmbd_session,
+//     ) ->  core::ffi::c_int
+// }
+
 #[no_mangle]
 pub fn rust_ksmbd_decode_ntlmssp_auth_blob(authblob: *mut authenticate_message,
     blob_len:  core::ffi::c_int,
@@ -86,16 +124,18 @@ pub fn rust_ksmbd_decode_ntlmssp_auth_blob(authblob: *mut authenticate_message,
         始指標的基礎上偏移了 dn_off 個元素或字節（視情況而定）。
      */
     // unsafe{rust_pr_info((authblob as *const c_char).add(dn_off as usize) as u32)};
-    kernel::prelude::pr_info!("{:?}\n", authblob as *const c_char);
-    kernel::prelude::pr_info!("{:?}\n", dn_off);
-    kernel::prelude::pr_info!("{:?}\n", dn_off as usize);
-    kernel::prelude::pr_info!("{:?}\n", unsafe{(authblob as *const c_char).add(dn_off as usize)});
-    domain_name = unsafe{rust_smb_strndup_from_utf16((authblob as *const c_char).add(dn_off as usize),
+    // kernel::prelude::pr_info!("{:?}\n", authblob as *const c_char);
+    // kernel::prelude::pr_info!("{:?}\n", dn_off);
+    // kernel::prelude::pr_info!("{:?}\n", dn_off as usize);
+    // kernel::prelude::pr_info!("{:?}\n", unsafe{(authblob as *const c_char).add(dn_off as usize)});
+    // unsafe{rust_pr_info(1)};
+    domain_name = unsafe{smb_strndup_from_utf16((authblob as *const c_char).add(dn_off as usize),
             dn_len as i32, true, (*conn).local_nls)};
     // domain_name = smb_strndup_from_utf16((const char *)authblob + dn_off,
     //           dn_len, true, conn->local_nls);
     if domain_name.is_null() {
-        return unsafe{PTR_ERR(domain_name as *const core::ffi::c_void) as i32};
+        return unsafe{rust_helper_PTR_ERR(domain_name as *const core::ffi::c_void) as i32};
+        // return 0;
     }
 
     /* process NTLMv2 authentication */
@@ -162,9 +202,7 @@ pub fn rust_ksmbd_decode_ntlmssp_auth_blob(authblob: *mut authenticate_message,
 // }
 
 
-pub fn ERR_PTR(error: core::ffi::c_long) -> *mut core::ffi::c_void {
-    return error as *mut core::ffi::c_void;
-}
+
 
 //static inline void * __must_check ERR_PTR(long error)
 // {
@@ -193,72 +231,52 @@ pub fn rust_nls_nullsize(codepage: *const nls_table) -> core::ffi::c_int {
     }
 }
 
-//static int smb_utf16_bytes(const __le16 *from, int maxbytes,
-    // const struct nls_table *codepage)
-pub fn rust_smb_strndup_from_utf16(
-    src: *const core::ffi::c_char,
-    maxlen: core::ffi::c_int,
-    is_unicode: bool_,
-    codepage: *const nls_table,
-) -> *mut core::ffi::c_char {
-    let mut len: core::ffi::c_int;
-    let ret: core::ffi::c_int;
-    let mut dst: *mut core::ffi::c_char;
-
-    if is_unicode {
-        len = unsafe{smb_utf16_bytes(src as *const u16, maxlen, codepage)};
-        len += unsafe{rust_nls_nullsize(codepage)};
-        dst = unsafe{__kmalloc(len as usize, GFP_KERNEL) as *mut core::ffi::c_char};
-        if dst.is_null() {
-            return unsafe{ERR_PTR(-ENOMEM as i64) as *mut i8};
-        }
-        ret = unsafe{smb_from_utf16(dst, src as *const u16, len as i32, maxlen, codepage,
-                false)};
-        if ret < 0 {
-            unsafe{kfree(dst as *const core::ffi::c_void)};
-            return unsafe{ERR_PTR(-EINVAL as i64) as *mut i8};
-        }
-    } else {
-        len = unsafe{strnlen(src, maxlen as u64) as i32};
-        len += 1;
-        dst = unsafe{__kmalloc(len as usize, GFP_KERNEL) as *mut core::ffi::c_char};
-        if dst.is_null() {
-            return unsafe{ERR_PTR(-ENOMEM as i64) as *mut i8};
-        }
-        unsafe{strscpy(dst, src, len as usize)};
+#[feature(vec_into_raw_parts)]
+#[no_mangle]
+pub extern "C" fn rust_ksmbd_alloc_user(resp: *mut ksmbd_login_response) -> *mut ksmbd_user {
+    let mut _passkey = kernel::prelude::Box::try_new(unsafe{(*resp).hash_sz} as usize).unwrap();
+    let mut user: kernel::prelude::Box<ksmbd_user> = kernel::prelude::Box::try_new(ksmbd_user{
+        name: unsafe{kstrdup((*resp).account.as_ptr(), GFP_KERNEL)},
+        passkey: kernel::prelude::Box::into_raw(_passkey) as *mut i8,
+        passkey_sz: unsafe{(*resp).hash_sz as usize},
+        flags: unsafe{(*resp).status},
+        uid: unsafe{(*resp).uid},
+        gid: unsafe{(*resp).gid},
+        failed_login_count: 0,
+    }).unwrap();
+    
+    if user.name.is_null() || user.passkey.is_null(){
+        drop(user);
+        return core::ptr::null_mut();
     }
-
-    return dst;
+    
+    unsafe{core::ptr::copy_nonoverlapping( unsafe{(*resp).hash.as_ptr()}, user.passkey, user.passkey_sz as usize)};
+    kernel::prelude::Box::into_raw(user)
 }
 
 
-// char *smb_strndup_from_utf16(const char *src, const int maxlen,
-//     const bool is_unicode,
-//     const struct nls_table *codepage)
+// struct ksmbd_user *ksmbd_alloc_user(struct ksmbd_login_response *resp)
 // {
-// int len, ret;
-// char *dst;
+// 	struct ksmbd_user *user = NULL;
 
-// if (is_unicode) {
-// len = smb_utf16_bytes((__le16 *)src, maxlen, codepage);
-// len += nls_nullsize(codepage);
-// dst = kmalloc(len, GFP_KERNEL);
-// if (!dst)
-// return ERR_PTR(-ENOMEM);
-// ret = smb_from_utf16(dst, (__le16 *)src, len, maxlen, codepage,
-//         false);
-// if (ret < 0) {
-// kfree(dst);
-// return ERR_PTR(-EINVAL);
-// }
-// } else {
-// len = strnlen(src, maxlen);
-// len++;
-// dst = kmalloc(len, GFP_KERNEL);
-// if (!dst)
-// return ERR_PTR(-ENOMEM);
-// strscpy(dst, src, len);
-// }
+// 	user = kmalloc(sizeof(struct ksmbd_user), GFP_KERNEL);
+// 	if (!user)
+// 		return NULL;
 
-// return dst;
+// 	user->name = kstrdup(resp->account, GFP_KERNEL);
+// 	user->flags = resp->status;
+// 	user->gid = resp->gid;
+// 	user->uid = resp->uid;
+// 	user->passkey_sz = resp->hash_sz;
+// 	user->passkey = kmalloc(resp->hash_sz, GFP_KERNEL);
+// 	if (user->passkey)
+// 		memcpy(user->passkey, resp->hash, resp->hash_sz);
+
+// 	if (!user->name || !user->passkey) {
+// 		kfree(user->name);
+// 		kfree(user->passkey);
+// 		kfree(user);
+// 		user = NULL;
+// 	}
+// 	return user;
 // }
